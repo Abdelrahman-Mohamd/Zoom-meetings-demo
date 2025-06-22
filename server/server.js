@@ -114,56 +114,80 @@ app.post("/api/meetings/:meetingId/join", (req, res) => {
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
+  console.log("🔌 User connected:", socket.id);
+  console.log("📊 Total connected clients:", io.engine.clientsCount);
   socket.on("join-meeting", ({ meetingId, user }) => {
+    console.log(
+      `👥 User ${user.name} (${socket.id}) joining meeting ${meetingId}`
+    );
     socket.join(meetingId);
 
-    const meeting = meetings.get(meetingId);
-    if (meeting) {
-      const participant = {
-        id: user.id,
-        name: user.name,
-        role: user.role,
-        socketId: socket.id,
+    let meeting = meetings.get(meetingId);
+    if (!meeting) {
+      // Create meeting if it doesn't exist (for testing)
+      console.log(`📋 Creating new meeting: ${meetingId}`);
+      meeting = {
+        id: meetingId,
+        hostId: user.id,
+        hostName: user.name,
+        participants: [],
+        createdAt: new Date(),
+        isActive: true,
       };
-
-      participants.set(socket.id, { ...participant, meetingId });
-
-      // Add participant to meeting
-      meeting.participants = meeting.participants.filter(
-        (p) => p.id !== user.id
-      );
-      meeting.participants.push(participant);
-
-      // Notify other participants
-      socket.to(meetingId).emit("user-joined", participant);
-
-      // Send current participants to the new user
-      socket.emit("participants-list", meeting.participants);
+      meetings.set(meetingId, meeting);
     }
-  });
 
+    const participant = {
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      socketId: socket.id,
+    };
+
+    participants.set(socket.id, { ...participant, meetingId });
+
+    // Add participant to meeting (remove any existing entry for this user)
+    meeting.participants = meeting.participants.filter((p) => p.id !== user.id);
+    meeting.participants.push(participant);
+
+    console.log(
+      `📋 Meeting ${meetingId} now has ${meeting.participants.length} participants:`,
+      meeting.participants.map((p) => `${p.name}(${p.socketId})`)
+    );
+
+    // Notify other participants that a new user joined
+    socket.to(meetingId).emit("user-joined", participant);
+
+    // Send current participants list to the new user
+    console.log(
+      `📤 Sending participants list to ${socket.id}:`,
+      meeting.participants
+    );
+    socket.emit("participants-list", meeting.participants);
+
+    // Send updated participants list to all users in the meeting
+    socket.to(meetingId).emit("participants-updated", meeting.participants);
+  });
   socket.on("offer", ({ meetingId, targetId, offer }) => {
-    socket.to(meetingId).emit("offer", {
+    console.log(`Forwarding offer from ${socket.id} to ${targetId}`);
+    socket.to(targetId).emit("offer", {
       senderId: socket.id,
-      targetId,
       offer,
     });
   });
 
   socket.on("answer", ({ meetingId, targetId, answer }) => {
-    socket.to(meetingId).emit("answer", {
+    console.log(`Forwarding answer from ${socket.id} to ${targetId}`);
+    socket.to(targetId).emit("answer", {
       senderId: socket.id,
-      targetId,
       answer,
     });
   });
 
   socket.on("ice-candidate", ({ meetingId, targetId, candidate }) => {
-    socket.to(meetingId).emit("ice-candidate", {
+    console.log(`Forwarding ICE candidate from ${socket.id} to ${targetId}`);
+    socket.to(targetId).emit("ice-candidate", {
       senderId: socket.id,
-      targetId,
       candidate,
     });
   });
@@ -186,24 +210,38 @@ io.on("connection", (socket) => {
   socket.on("screen-share-stop", ({ meetingId, user }) => {
     socket.to(meetingId).emit("screen-share-stop", { user });
   });
-
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    console.log("🔌 User disconnected:", socket.id);
+    console.log("📊 Total connected clients:", io.engine.clientsCount);
 
     const participant = participants.get(socket.id);
     if (participant) {
       const meeting = meetings.get(participant.meetingId);
       if (meeting) {
+        // Remove participant from meeting
         meeting.participants = meeting.participants.filter(
           (p) => p.socketId !== socket.id
         );
+
+        console.log(
+          `📋 Meeting ${participant.meetingId} now has ${meeting.participants.length} participants`
+        );
+
+        // Notify other participants
         socket.to(participant.meetingId).emit("user-left", participant);
+
+        // Send updated participants list to remaining users
+        socket
+          .to(participant.meetingId)
+          .emit("participants-updated", meeting.participants);
       }
       participants.delete(socket.id);
     }
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Local: http://localhost:${PORT}`);
+  console.log(`Network: http://192.168.1.3:${PORT}`);
 });

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/useAuth";
 import { API_URL } from "../config/api";
-import VideoCall from "../components/VideoCall";
+import VideoCallTest from "../components/VideoCallTest";
 import ChatPanel from "../components/ChatPanel";
 import ControlPanel from "../components/ControlPanel";
 import ParticipantsList from "../components/ParticipantsList";
@@ -32,24 +32,6 @@ interface MeetingInfo {
   participants: Participant[];
   createdAt: Date;
   isActive: boolean;
-}
-
-interface Participant {
-  id: string;
-  name: string;
-  role: "host" | "guest";
-  socketId: string;
-}
-
-interface ChatMessage {
-  id: string;
-  message: string;
-  user: {
-    id: string;
-    name: string;
-    role: "host" | "guest";
-  };
-  timestamp: Date;
 }
 
 const MeetingRoom: React.FC = () => {
@@ -91,7 +73,8 @@ const MeetingRoom: React.FC = () => {
       navigate("/");
     }
   };
-  const handleSendMessage = (_message: string) => {
+  const handleSendMessage = (message: string) => {
+    console.log("Send message:", message);
     // This will be handled by the VideoCall component through socket
   };
 
@@ -137,7 +120,8 @@ const MeetingRoom: React.FC = () => {
             isChatOpen ? "pr-80" : ""
           } transition-all duration-300`}
         >
-          <VideoCall
+          {" "}
+          <VideoCallTest
             meetingId={meetingId!}
             user={user}
             token={token!}

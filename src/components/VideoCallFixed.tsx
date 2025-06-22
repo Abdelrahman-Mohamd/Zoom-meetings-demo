@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import io, { Socket } from "socket.io-client";
 import { API_URL } from "../config/api";
 
@@ -48,115 +48,114 @@ const VideoCall: React.FC<VideoCallProps> = ({
     new Map()
   );
   const [peers, setPeers] = useState<Map<string, RTCPeerConnection>>(new Map());
+  const [isMediaReady, setIsMediaReady] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideosRef = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   // Clean up peer connection
-  const cleanupPeerConnection = (socketId: string) => {
+  const cleanupPeerConnection = useCallback((socketId: string) => {
     console.log("Cleaning up peer connection for:", socketId);
-    const peer = peers.get(socketId);
-    if (peer) {
-      peer.close();
-      setPeers((prev) => {
-        const newPeers = new Map(prev);
-        newPeers.delete(socketId);
-        return newPeers;
-      });
-    }
+    setPeers((prevPeers) => {
+      const peer = prevPeers.get(socketId);
+      if (peer) {
+        peer.close();
+      }
+      const newPeers = new Map(prevPeers);
+      newPeers.delete(socketId);
+      return newPeers;
+    });
+
     setRemoteStreams((prev) => {
       const newStreams = new Map(prev);
       newStreams.delete(socketId);
       return newStreams;
     });
-  };
+  }, []);
 
   // Create peer connection
-  const createPeerConnection = (
-    socketId: string,
-    shouldCreateOffer: boolean = false
-  ): RTCPeerConnection => {
-    console.log(
-      "Creating peer connection for:",
-      socketId,
-      "shouldCreateOffer:",
-      shouldCreateOffer
-    );
+  const createPeerConnection = useCallback(
+    (
+      socketId: string,
+      shouldCreateOffer: boolean = false
+    ): RTCPeerConnection => {
+      console.log(
+        "Creating peer connection for:",
+        socketId,
+        "shouldCreateOffer:",
+        shouldCreateOffer
+      );
 
-    // Check if peer already exists
-    if (peers.has(socketId)) {
-      console.log("Peer connection already exists for:", socketId);
-      return peers.get(socketId)!;
-    }
-
-    const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-
-    // Add local stream to peer connection
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        console.log("Adding track to peer:", track.kind);
-        peer.addTrack(track, localStream);
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
       });
-    }
 
-    // Handle remote stream
-    peer.ontrack = (event) => {
-      console.log("Received remote track from:", socketId);
-      const [remoteStream] = event.streams;
-      setRemoteStreams((prev) => {
-        const newStreams = new Map(prev);
-        newStreams.set(socketId, remoteStream);
-        return newStreams;
-      });
-    };
-
-    // Handle ICE candidates
-    peer.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        console.log("Sending ICE candidate to:", socketId);
-        socket.emit("ice-candidate", {
-          meetingId,
-          targetId: socketId,
-          candidate: event.candidate,
+      // Add local stream to peer connection
+      if (localStream) {
+        localStream.getTracks().forEach((track) => {
+          console.log("Adding track to peer:", track.kind);
+          peer.addTrack(track, localStream);
         });
       }
-    };
 
-    // Handle connection state changes
-    peer.onconnectionstatechange = () => {
-      console.log(
-        `Peer connection state with ${socketId}:`,
-        peer.connectionState
-      );
-    };
+      // Handle remote stream
+      peer.ontrack = (event) => {
+        console.log("Received remote track from:", socketId);
+        const [remoteStream] = event.streams;
+        setRemoteStreams((prev) => {
+          const newStreams = new Map(prev);
+          newStreams.set(socketId, remoteStream);
+          return newStreams;
+        });
+      };
 
-    setPeers((prev) => {
-      const newPeers = new Map(prev);
-      newPeers.set(socketId, peer);
-      return newPeers;
-    });
-
-    // Create offer if requested
-    if (shouldCreateOffer && socket) {
-      setTimeout(async () => {
-        try {
-          console.log("Creating offer for:", socketId);
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-          socket.emit("offer", { meetingId, targetId: socketId, offer });
-        } catch (error) {
-          console.error("Error creating offer:", error);
+      // Handle ICE candidates
+      peer.onicecandidate = (event) => {
+        if (event.candidate && socket) {
+          console.log("Sending ICE candidate to:", socketId);
+          socket.emit("ice-candidate", {
+            meetingId,
+            targetId: socketId,
+            candidate: event.candidate,
+          });
         }
-      }, 1000); // Small delay to ensure peer is ready
-    }
+      };
 
-    return peer;
-  };
+      // Handle connection state changes
+      peer.onconnectionstatechange = () => {
+        console.log(
+          `Peer connection state with ${socketId}:`,
+          peer.connectionState
+        );
+      };
+
+      setPeers((prev) => {
+        const newPeers = new Map(prev);
+        newPeers.set(socketId, peer);
+        return newPeers;
+      });
+
+      // Create offer if requested
+      if (shouldCreateOffer && socket) {
+        setTimeout(async () => {
+          try {
+            console.log("Creating offer for:", socketId);
+            const offer = await peer.createOffer();
+            await peer.setLocalDescription(offer);
+            socket.emit("offer", { meetingId, targetId: socketId, offer });
+          } catch (error) {
+            console.error("Error creating offer:", error);
+          }
+        }, 1000); // Small delay to ensure peer is ready
+      }
+
+      return peer;
+    },
+    [localStream, socket, meetingId]
+  );
 
   // Initialize local media first
   useEffect(() => {
@@ -169,6 +168,7 @@ const VideoCall: React.FC<VideoCallProps> = ({
         });
         console.log("Media access granted:", stream);
         setLocalStream(stream);
+        setIsMediaReady(true);
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
@@ -182,6 +182,7 @@ const VideoCall: React.FC<VideoCallProps> = ({
           });
           console.log("Media access granted with lower constraints:", stream);
           setLocalStream(stream);
+          setIsMediaReady(true);
           if (localVideoRef.current) {
             localVideoRef.current.srcObject = stream;
           }
@@ -192,21 +193,22 @@ const VideoCall: React.FC<VideoCallProps> = ({
     };
 
     initializeMedia();
-
     return () => {
       if (localStream) {
+        console.log("Cleaning up local stream");
         localStream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, []);
+  }, [localStream]);
 
   // Initialize socket connection after media is ready
   useEffect(() => {
-    if (!localStream) return;
+    if (!isMediaReady || !localStream) return;
 
     console.log("Connecting to socket...");
     const newSocket = io(API_URL, {
       transports: ["websocket"],
+      forceNew: true,
     });
     setSocket(newSocket);
 
@@ -219,7 +221,6 @@ const VideoCall: React.FC<VideoCallProps> = ({
     // Socket event listeners
     newSocket.on("participants-list", (participantsList: Participant[]) => {
       console.log("Received participants list:", participantsList);
-      setParticipants(participantsList);
       onParticipantsUpdate(participantsList);
 
       // Create peer connections for existing participants (excluding self)
@@ -239,14 +240,6 @@ const VideoCall: React.FC<VideoCallProps> = ({
 
     newSocket.on("user-joined", (participant: Participant) => {
       console.log("User joined:", participant);
-      setParticipants((prev) => {
-        const updated = [
-          ...prev.filter((p) => p.id !== participant.id),
-          participant,
-        ];
-        onParticipantsUpdate(updated);
-        return updated;
-      });
 
       // Only create peer connection if this is not the current user
       if (participant.socketId !== newSocket.id && participant.id !== user.id) {
@@ -257,11 +250,6 @@ const VideoCall: React.FC<VideoCallProps> = ({
 
     newSocket.on("user-left", (participant: Participant) => {
       console.log("User left:", participant);
-      setParticipants((prev) => {
-        const updated = prev.filter((p) => p.id !== participant.id);
-        onParticipantsUpdate(updated);
-        return updated;
-      });
 
       // Clean up peer connection
       cleanupPeerConnection(participant.socketId);
@@ -283,10 +271,13 @@ const VideoCall: React.FC<VideoCallProps> = ({
     newSocket.on("answer", async ({ senderId, answer }) => {
       console.log("Received answer from:", senderId);
       try {
-        const peer = peers.get(senderId);
-        if (peer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(answer));
-        }
+        setPeers((prevPeers) => {
+          const peer = prevPeers.get(senderId);
+          if (peer) {
+            peer.setRemoteDescription(new RTCSessionDescription(answer));
+          }
+          return prevPeers;
+        });
       } catch (error) {
         console.error("Error handling answer:", error);
       }
@@ -295,10 +286,13 @@ const VideoCall: React.FC<VideoCallProps> = ({
     newSocket.on("ice-candidate", async ({ senderId, candidate }) => {
       console.log("Received ICE candidate from:", senderId);
       try {
-        const peer = peers.get(senderId);
-        if (peer && candidate) {
-          await peer.addIceCandidate(new RTCIceCandidate(candidate));
-        }
+        setPeers((prevPeers) => {
+          const peer = prevPeers.get(senderId);
+          if (peer && candidate) {
+            peer.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+          return prevPeers;
+        });
       } catch (error) {
         console.error("Error handling ICE candidate:", error);
       }
@@ -312,11 +306,22 @@ const VideoCall: React.FC<VideoCallProps> = ({
       console.log("Cleaning up socket connection");
       newSocket.disconnect();
       // Clean up all peer connections
-      peers.forEach((peer) => peer.close());
-      setPeers(new Map());
+      setPeers((prevPeers) => {
+        prevPeers.forEach((peer) => peer.close());
+        return new Map();
+      });
       setRemoteStreams(new Map());
     };
-  }, [meetingId, user, localStream]);
+  }, [
+    meetingId,
+    user,
+    isMediaReady,
+    localStream,
+    onParticipantsUpdate,
+    onChatMessage,
+    createPeerConnection,
+    cleanupPeerConnection,
+  ]);
 
   // Update media tracks based on controls
   useEffect(() => {
@@ -329,125 +334,6 @@ const VideoCall: React.FC<VideoCallProps> = ({
       });
     }
   }, [localStream, isVideoEnabled, isAudioEnabled]);
-
-  // Create peer connection
-  const createPeerConnection = (
-    socketId: string,
-    shouldCreateOffer: boolean = false
-  ): RTCPeerConnection => {
-    console.log(
-      "Creating peer connection for:",
-      socketId,
-      "shouldCreateOffer:",
-      shouldCreateOffer
-    );
-
-    // Check if peer already exists
-    if (peers.has(socketId)) {
-      console.log("Peer connection already exists for:", socketId);
-      return peers.get(socketId)!;
-    }
-
-    const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-
-    // Add local stream to peer connection
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        console.log("Adding track to peer:", track.kind);
-        peer.addTrack(track, localStream);
-      });
-    }
-
-    // Handle remote stream
-    peer.ontrack = (event) => {
-      console.log("Received remote track from:", socketId);
-      const [remoteStream] = event.streams;
-      setRemoteStreams((prev) => {
-        const newStreams = new Map(prev);
-        newStreams.set(socketId, remoteStream);
-        return newStreams;
-      });
-    };
-
-    // Handle ICE candidates
-    peer.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        console.log("Sending ICE candidate to:", socketId);
-        socket.emit("ice-candidate", {
-          meetingId,
-          targetId: socketId,
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    // Handle connection state changes
-    peer.onconnectionstatechange = () => {
-      console.log(
-        `Peer connection state with ${socketId}:`,
-        peer.connectionState
-      );
-    };
-
-    setPeers((prev) => {
-      const newPeers = new Map(prev);
-      newPeers.set(socketId, peer);
-      return newPeers;
-    });
-
-    // Create offer if requested
-    if (shouldCreateOffer && socket) {
-      setTimeout(async () => {
-        try {
-          console.log("Creating offer for:", socketId);
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-          socket.emit("offer", { meetingId, targetId: socketId, offer });
-        } catch (error) {
-          console.error("Error creating offer:", error);
-        }
-      }, 1000); // Small delay to ensure peer is ready
-    }
-
-    return peer;
-  };
-
-  // Clean up peer connection
-  const cleanupPeerConnection = (socketId: string) => {
-    console.log("Cleaning up peer connection for:", socketId);
-    const peer = peers.get(socketId);
-    if (peer) {
-      peer.close();
-      setPeers((prev) => {
-        const newPeers = new Map(prev);
-        newPeers.delete(socketId);
-        return newPeers;
-      });
-    }
-    setRemoteStreams((prev) => {
-      const newStreams = new Map(prev);
-      newStreams.delete(socketId);
-      return newStreams;
-    });
-  };
-  // Create offer for new peer
-  // const createOffer = async (socketId: string) => {
-  //   const peer = peers.get(socketId);
-  //   if (peer && socket) {
-  //     const offer = await peer.createOffer();
-  //     await peer.setLocalDescription(offer);
-  //     socket.emit('offer', { meetingId, targetId: socketId, offer });
-  //   }
-  // };
-  // Handle screen sharing (to be implemented)
-  // const handleScreenShare = async () => {
-  //   // Screen sharing implementation will go here
-  // };
 
   return (
     <div className="h-full flex flex-col bg-gray-900">
@@ -503,6 +389,14 @@ const VideoCall: React.FC<VideoCallProps> = ({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Debug Info */}
+      <div className="p-2 bg-gray-800 text-white text-sm">
+        <p>Local Stream: {localStream ? "✓" : "✗"}</p>
+        <p>Socket Connected: {socket?.connected ? "✓" : "✗"}</p>
+        <p>Peer Connections: {peers.size}</p>
+        <p>Remote Streams: {remoteStreams.size}</p>
       </div>
     </div>
   );
