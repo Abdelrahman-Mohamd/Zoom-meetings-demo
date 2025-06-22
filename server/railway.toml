@@ -1,0 +1,8 @@
+version: 2
+build:
+  commands:
+    - npm install
+  watch:
+    - server/**
+start:
+  command: npm start

@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "deploy:build": "npm run build",
+    "deploy:preview": "npm run build && npm run preview"
+  }
+}
